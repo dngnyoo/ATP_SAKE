@@ -1,0 +1,27 @@
+============================================================
+PROJECT: Structure-Aware Keyword Extraction
+DOCUMENT ID: 502567
+============================================================
+
+[1. TITLE SECTION]
+RAW: Detecting graph-based spatial outliers .
+CLEANED (RE): detecting graph-based spatial outliers
+FINAL (SPACY): ['detect', 'graph-base', 'spatial outlier']
+
+------------------------------------------------------------
+[2. ABSTRACT SECTION]
+RAW (First 300): of outliers can lead to the discovery of unexpected , interesting , and useful knowledge . Existing methods are designed for detecting spatial outliers in multidimensional geometric data sets , where a distance metric is available . In this paper , we focus on detecting spatial outliers in graph str...
+CLEANED (RE): of outliers can lead to the discovery of unexpected interesting and useful knowledge existing methods are designed for detecting spatial outliers in multidimensional geometric data sets where a distance metric is available in this paper we focus on detecting spatial outliers in graph structured data...
+FINAL (SPACY): ['outlier', 'lead', 'discovery', 'unexpected interesting', 'useful knowledge', 'exist', 'design', 'detect', 'spatial outlier', 'multidimensional geometric data set', 'distance metric', 'available', 'paper', 'focus', 'detect', 'spatial outlier', 'graph', 'structure', 'data set', 'define', 'statistical test', 'analyze', 'statistical foundation', 'underlie', 'approach design', 'fast algorithm', 'detect', 'spatial outlier', 'provide', 'cost model', 'outli detection procedure', 'addition', 'provide', 'experimental', 'application', 'algorithm', 'minneapolis-st paul twin cities traffic', 'dataset', 'effectiveness', 'usefulness']
+
+------------------------------------------------------------
+[3. BODY SECTION - NOISE CHECK]
+RAW SNIPPET: ...include I-35W , I35E , I-94 , I-394 , I-494 , and I-694 . State trunk highways include TH-100 , TH-169 , TH-212 , TH-252 , TH-5 , TH-55 , TH-62 , TH-65 , and TH-77 . I-494 and I-694 together forming a ring around the Twin Cities . I-94 passes from East to North-West , while I-35W and I-35E run in a North-South direction . Downtown Minneapolis is located at the intersection of I-94 , I-394 , and I-35W , and downtown Saint Paul is located at the intersection of I-35E and I-94 . I - I - I - I - I -...
+
+CLEANED (RE) SNIPPET: include i- w i e i- i- i- and i- state trunk highways include th- th- th- th- th- th- th- th- and th- i- and i- together forming a ring around the twin cities i- passes from east to north-west while i- w and i- e run in a north-south direction downtown minneapolis is located at the intersection of i- i- and i- w and downtown saint paul is located at the intersection of i- e and i- i - i - i - i - i 
+
+FINAL (SPACY) TOKENS: ['state trunk highway', 'ring', 'twin city', 'east', 'north-west', 'run', 'north-south direction downtown minneapolis', 'intersection', 'downtown saint paul', 'intersection']
+
+============================================================
+GROUND TRUTH (Reference): outlier detection, spatial data mining
+============================================================

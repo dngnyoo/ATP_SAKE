@@ -1,0 +1,414 @@
+%Version 3.1 December 2024
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%                                                                 %%
+%% Please do not use \input{...} to include other tex files.       %%
+%% Submit your LaTeX manuscript as one .tex document.              %%
+%%                                                                 %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[pdflatex,sn-mathphys-num]{sn-jnl}
+
+%%%% Standard Packages
+\usepackage{graphicx}%
+\usepackage{multirow}%
+\usepackage{amsmath,amssymb,amsfonts}%
+\usepackage{amsthm}%
+\usepackage{mathrsfs}%
+\usepackage[title]{appendix}%
+\usepackage{xcolor}%
+\usepackage{textcomp}%
+\usepackage{manyfoot}%
+\usepackage{booktabs}%
+\usepackage{algorithm}%
+\usepackage{algorithmicx}%
+\usepackage{algpseudocode}%
+\usepackage{listings}%
+
+\raggedbottom
+
+\begin{document}
+
+\title[Structure-Aware Keyphrase Extraction]{Structure-Aware Keyphrase Extraction with Positional, Section, and Semantic Relevance Weighting}
+
+\author[]{\fnm{Donggeun} \sur{Yoo}}
+
+\author[]{\fnm{Lu} \sur{Zhang}}
+
+\abstract{%
+Keyphrase extraction from scientific documents is a fundamental task in natural language processing.
+While TF-IDF provides a strong unsupervised baseline, it ignores the structural information inherent
+in academic papers. We propose SAKE (Structure-Aware Keyphrase Extraction), a multiplicative scoring
+framework that augments TF-IDF with three additional signals: positional weighting (phrases appearing
+earlier score higher), section-aware weighting (title and abstract phrases are boosted), and semantic
+relevance via Latent Dirichlet Allocation (LDA). Through an ablation study on the Krapivin benchmark
+(2,304 documents), we find that section-aware weighting is the most impactful component, improving
+F1@5 by 28.7\% relative to TF-IDF with positional features alone. Positional weighting contributes a
+further 12.0\% improvement. However, adding LDA-based semantic relevance yields no additional gain,
+suggesting that lightweight topic models are redundant in the presence of explicit structural signals.
+Our best configuration (TF-IDF + Position + Section) achieves an F1@5 of 0.1539, and aggressive
+section weights (title 8$\times$, abstract 4$\times$) push this to 0.1668, a 56.2\% relative
+improvement over the TF-IDF baseline.}
+
+\keywords{Keyphrase Extraction, TF-IDF, Document Structure, Positional Weighting, LDA, Ablation Study}
+
+\maketitle
+
+%% ================================================================
+%%  1  INTRODUCTION
+%% ================================================================
+\section{Introduction}\label{sec:intro}
+
+Keyphrase extraction is a core task in natural language processing that supports downstream
+applications such as information retrieval, summarization, topic indexing, and scientific document
+understanding. TF-IDF serves as a strong, interpretable baseline for this task because it is
+efficient and easy to implement. However, TF-IDF treats a document as a bag of words and fails to
+model structural information that is critical in long, structured documents like research
+papers~\cite{florescu2017}.
+
+In scientific articles, candidate phrases appearing in the title, abstract, or early sections are
+typically more informative than those found only in later body text. Prior work has demonstrated that
+positional information and semantic relevance can improve unsupervised keyphrase extraction
+quality~\cite{florescu2017,patel2021,liang2021,ding2021,song2023}.
+
+This project investigates whether incorporating positional and structural signals into a TF-IDF-based
+framework can improve keyphrase extraction performance while maintaining interpretability, and whether
+a lightweight notion of topic relevance via Latent Dirichlet Allocation
+(LDA)~\cite{blei2003} can further enhance keyword ranking.
+
+%% ================================================================
+%%  2  EXPERIMENTAL PLAN
+%% ================================================================
+\section{Experimental Plan}\label{sec:plan}
+
+\subsection{Working Hypotheses}\label{sec:hypotheses}
+
+We formulate three hypotheses that our experiments aim to test:
+
+\noindent\textbf{H1 (Structural Salience).}
+Candidate phrases appearing in salient sections (title, abstract) are more informative than those in
+regular body text. Assigning higher structural weights to title and abstract phrases should improve
+precision in identifying primary keyphrases.
+
+\noindent\textbf{H2 (Positional Salience).}
+Phrases located earlier in the document carry higher topical weight. Applying positional weighting
+based on first-occurrence position should improve recall and F1.
+
+\noindent\textbf{H3 (Semantic Relevance).}
+A lightweight topic model (LDA) can capture topical fit beyond raw frequency, further improving
+ranking quality when combined with positional and section-aware features.
+
+\subsection{Dataset}\label{sec:dataset}
+
+We use the Krapivin Benchmark~\cite{krapivin2009}, a collection of 2,304 full-text computer
+science research papers with author-assigned extractive keyphrases as ground truth. Of these, 2,283
+documents have non-empty ground truth and are used for evaluation. No training split is needed since
+our approach is entirely unsupervised. The dataset is loaded from HuggingFace
+(\texttt{midas/krapivin}, \texttt{raw} config).
+
+\paragraph{Preprocessing.}
+The preprocessing pipeline (implemented in \texttt{ATP.ipynb}) consists of:
+\begin{enumerate}
+  \item \textbf{Document Parsing}: Tokens are segmented into title, abstract, and body sections
+        using the \texttt{-{}-} delimiter and section identifiers (T, A, B).
+  \item \textbf{Text Normalization}: Regex-based cleaning removes \LaTeX{} equations, citations,
+        emails, URLs, section numbers, and special characters. Text is lowercased.
+  \item \textbf{Candidate Phrase Extraction}: spaCy (\texttt{en\_core\_web\_sm}) extracts noun
+        phrases using POS patterns: $(\text{Adj})^{*}(\text{Noun})^{+}$. Stopwords,
+        punctuation-only strings, and excessively short/long phrases are removed.
+  \item \textbf{Output}: A preprocessed pickle file (\texttt{preprocessed\_krapivin.pkl}) containing
+        per-document: \texttt{doc\_id}, \texttt{title\_phrases}, \texttt{abstract\_phrases},
+        \texttt{body\_phrases}, \texttt{all\_phrases} (concatenation preserving order), and
+        \texttt{ground\_truth}.
+\end{enumerate}
+
+\subsection{Experimental Design}\label{sec:design}
+
+Table~\ref{tab:fixed} lists the fixed parameters and Table~\ref{tab:free} lists the free parameters
+explored in the sensitivity analysis.
+
+\begin{table}[h]
+\caption{Fixed parameters}\label{tab:fixed}
+\begin{tabular*}{\textwidth}{@{\extracolsep\fill}lll@{}}
+\toprule
+Parameter & Value & Rationale \\
+\midrule
+POS pattern            & $(\text{Adj})^{*}(\text{Noun})^{+}$ & Standard practice \\
+spaCy model            & \texttt{en\_core\_web\_sm}           & Lightweight, sufficient for POS \\
+IDF smoothing          & $\log\!\bigl(\tfrac{N}{1+\text{df}}\bigr)$ & Standard TF-IDF \\
+Evaluation cutoffs $K$ & 5, 10, 15                            & Typical keyphrase list lengths \\
+Stemmer                & Porter Stemmer                       & Standard for evaluation \\
+LDA topics             & 20                                   & Granularity vs.\ generalization \\
+LDA passes             & 10                                   & Sufficient for convergence \\
+LDA random seed        & 42                                   & Reproducibility \\
+Position weight        & $\frac{1}{1+\text{pos}/\text{total}}$ & Smooth decay $[0.5,1.0]$ \\
+Topic weight shift     & $0.5+\cos(\mathbf{d},\mathbf{p})$    & Modulating range $[0.5,1.5]$ \\
+\botrule
+\end{tabular*}
+\end{table}
+
+\begin{table}[h]
+\caption{Free parameters (sensitivity analysis)}\label{tab:free}
+\begin{tabular*}{\textwidth}{@{\extracolsep\fill}lll@{}}
+\toprule
+Parameter & Tested Values & Purpose \\
+\midrule
+Title weight $\alpha_T$    & 2.0, 3.0, 5.0, 8.0 & Sensitivity analysis \\
+Abstract weight $\alpha_A$ & 1.5, 2.0, 3.0, 4.0 & Sensitivity analysis \\
+Body weight $\alpha_B$     & 1.0 (fixed)         & Reference level \\
+\botrule
+\end{tabular*}
+\end{table}
+
+\subsection{Experimental Setup}\label{sec:setup}
+
+\paragraph{Combined Scoring Model.}
+For each candidate phrase $t$ in document $d$, the final score is computed as:
+\begin{equation}\label{eq:score}
+  \text{Score}(t) = \text{TF-IDF}(t) \;\cdot\; W_{\text{position}}(t) \;\cdot\;
+                    W_{\text{structure}}(t) \;\cdot\; W_{\text{topic}}(t),
+\end{equation}
+where
+\begin{align}
+  W_{\text{position}}(t) &= \frac{1}{1 + \frac{\text{first\_pos}(t)}{\text{total\_phrases}}}, \label{eq:pos}\\[4pt]
+  W_{\text{structure}}(t) &= \max\!\bigl(\alpha_B,\; [\,t \in \text{Abstract}\,]\cdot\alpha_A,\;
+                             [\,t \in \text{Title}\,]\cdot\alpha_T\bigr), \label{eq:sec}\\[4pt]
+  W_{\text{topic}}(t) &= 0.5 + \cos(\mathbf{d}_{\text{LDA}},\;\mathbf{t}_{\text{LDA}}). \label{eq:topic}
+\end{align}
+
+\paragraph{Ablation Study Design.}
+We isolate the contribution of each feature through incremental addition:
+\begin{enumerate}
+  \item \textbf{TF-IDF only} --- bag-of-words frequency baseline.
+  \item \textbf{TF-IDF + Position} --- adds Eq.~\eqref{eq:pos}.
+  \item \textbf{TF-IDF + Position + Section} --- adds Eq.~\eqref{eq:sec}.
+  \item \textbf{TF-IDF + Position + Section + Semantic (Full SAKE)} --- adds Eq.~\eqref{eq:topic}.
+\end{enumerate}
+
+
+
+\paragraph{Evaluation Metrics.}
+We use Precision@$K$, Recall@$K$, and F1@$K$, with predictions matched to gold keyphrases after Porter
+stemming (standard practice~\cite{florescu2017}). Results are macro-averaged across all 2,283
+documents with ground truth.
+
+
+
+%% ================================================================
+%%  3  RESULTS
+%% ================================================================
+\section{Results}\label{sec:results}
+
+\subsection{Ablation Study}\label{sec:ablation}
+
+Table~\ref{tab:ablation} presents the main ablation results.
+
+\begin{table}[h]
+\caption{Ablation study --- Precision, Recall, and F1 at $K=5,10,15$. Best values per metric
+in bold.}\label{tab:ablation}
+\begin{tabular*}{\textwidth}{@{\extracolsep\fill}lccccccccc@{}}
+\toprule
+ & \multicolumn{3}{c}{$K=5$} & \multicolumn{3}{c}{$K=10$} & \multicolumn{3}{c}{$K=15$} \\
+\cmidrule{2-4}\cmidrule{5-7}\cmidrule{8-10}
+Model & P & R & F1 & P & R & F1 & P & R & F1 \\
+\midrule
+TF-IDF              & .0979 & .1334 & .1068 & .0789 & .2145 & .1104 & .0664 & .2700 & .1027 \\
++ Position          & .1093 & .1496 & .1196 & .0859 & .2340 & .1201 & .0722 & .2957 & .1117 \\
++ Pos + Sec         & \textbf{.1400} & \textbf{.1938} & \textbf{.1539} & \textbf{.1050} & \textbf{.2899} & \textbf{.1470} & \textbf{.0845} & \textbf{.3473} & \textbf{.1307} \\
+Full SAKE           & .1391 & .1938 & .1534 & .1031 & .2857 & .1446 & .0835 & .3461 & .1293 \\
+\botrule
+\end{tabular*}
+\end{table}
+
+\paragraph{Positional weighting (H2: Supported).}
+Adding position weights improves F1@5 from 0.1068 to 0.1196 (+12.0\% relative), confirming that
+phrases appearing earlier in academic papers are more likely to be keyphrases.
+
+\paragraph{Section-aware weighting (H1: Strongly Supported).}
+This is the most impactful component. F1@5 jumps from 0.1196 to 0.1539 (+28.7\% relative) when
+section weights are added. Title and abstract phrases receive $3\times$ and $2\times$ boosts
+respectively, which dramatically improves both precision and recall. This aligns with the hypothesis
+that structural salience in scientific documents provides the strongest signal for keyphrase
+identification.
+
+\paragraph{Semantic relevance via LDA (H3: Not Supported).}
+Adding the LDA topic weight slightly \emph{decreases} performance (F1@5: 0.1539 $\to$ 0.1534;
+F1@10: 0.1470 $\to$ 0.1446). The semantic signal from a 20-topic LDA model appears largely redundant
+with position and section features, or the topic granularity may be insufficient to distinguish
+keyphrases from related but non-key phrases within the same topic cluster.
+
+\subsection{Hyperparameter Sensitivity}\label{sec:sensitivity}
+
+Table~\ref{tab:sensitivity} shows F1 for different section weight configurations using the
+TF-IDF + Position + Section model.
+
+\begin{table}[h]
+\caption{F1 at different section weight configurations}\label{tab:sensitivity}
+\begin{tabular*}{\textwidth}{@{\extracolsep\fill}lccc@{}}
+\toprule
+Configuration & F1@5 & F1@10 & F1@15 \\
+\midrule
+Low: $\alpha_T{=}2.0,\;\alpha_A{=}1.5$       & .1446 & .1367 & .1252 \\
+Mid: $\alpha_T{=}3.0,\;\alpha_A{=}2.0$        & .1539 & .1470 & .1307 \\
+High: $\alpha_T{=}5.0,\;\alpha_A{=}3.0$       & .1625 & .1535 & .1354 \\
+Very High: $\alpha_T{=}8.0,\;\alpha_A{=}4.0$  & \textbf{.1668} & \textbf{.1580} & \textbf{.1368} \\
+\botrule
+\end{tabular*}
+\end{table}
+
+Performance increases monotonically as section weights grow larger, suggesting the model benefits
+from aggressively boosting title and abstract phrases. The ``Very High'' configuration achieves
+F1@5 of 0.1668, a 56.2\% relative improvement over the TF-IDF baseline. This strong sensitivity
+to section weights underscores that document structure is the dominant feature for keyphrase
+extraction in scientific papers.
+
+\subsection{Error Analysis}\label{sec:errors}
+
+Table~\ref{tab:errors} breaks down missed keyphrases by n-gram type for the Full SAKE model at
+$K{=}15$.
+
+\begin{table}[h]
+\caption{Missed keyphrases by n-gram type (Full SAKE, $K{=}15$)}\label{tab:errors}
+\begin{tabular*}{\textwidth}{@{\extracolsep\fill}lcc@{}}
+\toprule
+N-gram Type & Missed Count & Percentage \\
+\midrule
+Bigram  & 3{,}534 & 61.8\% \\
+Unigram & 1{,}152 & 20.2\% \\
+3+ gram & 1{,}032 & 18.1\% \\
+\botrule
+\end{tabular*}
+\end{table}
+
+The overall hit rate at $K{=}15$ is 2{,}863/8{,}581 = 33.4\%. The majority of missed keyphrases are
+bigrams (61.8\%), which is expected since bigrams form the largest category of author-assigned
+keyphrases. Unigrams are missed less frequently (20.2\%), likely because single-word terms tend to
+have higher TF-IDF scores. Longer n-grams (3+) account for 18.1\% of misses, often due to
+exact-match failures where the candidate extraction pipeline produces slight variations of the gold
+phrase.
+
+\subsection{Qualitative Examples}\label{sec:qualitative}
+
+Sample predictions from five randomly selected documents show that both the baseline and full model
+frequently identify domain-relevant terms that are semantically close to gold keyphrases but do not
+match after stemming. For instance, for document 1024923 with gold keyphrases including ``forward
+simulations'' and ``backward simulations'', both models correctly retrieve ``forward simulation''
+and ``backward simulation'' (matching after stemming). However, keyphrases like ``refinement
+mappings'' and ``prophecy variables'' --- which are conceptual rather than frequent --- are
+systematically missed.
+
+%% ================================================================
+%%  4  DISCUSSION
+%% ================================================================
+\section{Discussion}\label{sec:discussion}
+
+\subsection{Summary of Findings}
+
+Our SAKE framework demonstrates that incorporating document structure into TF-IDF-based keyphrase
+extraction yields substantial improvements:
+
+\begin{enumerate}
+  \item \textbf{Section-aware weighting is the single most impactful feature}, providing
+        ${\sim}29\%$ relative F1 improvement. This validates the core hypothesis that document
+        structure (title, abstract, body) provides strong prior information about keyphrase salience
+        in scientific papers.
+  \item \textbf{Positional weighting provides consistent but modest gains} (${\sim}12\%$ relative F1
+        improvement), confirming that first-occurrence position correlates with keyphrase importance.
+  \item \textbf{LDA-based semantic relevance does not improve over the structure-aware model.} The
+        20-topic LDA model's coarse topic assignments appear redundant with the information already
+        captured by position and section features. This is a negative result, but an informative one
+        --- it suggests that in the presence of explicit structural signals, lightweight topic
+        modeling adds little value.
+\end{enumerate}
+
+\subsection{Challenges and Solutions}
+
+\begin{itemize}
+  \item \textbf{Noisy candidate extraction}: The spaCy POS tagger occasionally produces parsing
+        artifacts. We addressed this with regex-based preprocessing to remove \LaTeX{}, citations,
+        and special tokens before spaCy processing.
+  \item \textbf{Hyphenated compounds}: Terms like ``graph-based'' were being split by spaCy. We
+        solved this by temporarily replacing hyphens with underscores during POS tagging, then
+        restoring them.
+  \item \textbf{Exact-match evaluation}: Stemming-based matching misses near-synonyms (e.g.,
+        ``automaton'' vs.\ ``automata''). This is a known limitation of extractive keyphrase
+        evaluation.
+\end{itemize}
+
+\subsection{Limitations}
+
+\begin{itemize}
+  \item The approach is limited to extractive keyphrases --- it cannot generate abstractive
+        keyphrases that do not appear verbatim in the text.
+  \item The LDA model uses a fixed number of topics (20), which may not be optimal. Grid search
+        over topic counts could potentially improve the semantic component.
+  \item Section boundary detection relies on dataset-specific markers (\texttt{-{}-T}, \texttt{-{}-A},
+        \texttt{-{}-B}). Generalizing to arbitrary documents would require a robust section detector.
+\end{itemize}
+
+\subsection{Future Directions}
+
+\begin{enumerate}
+  \item \textbf{Better semantic representations}: Replace LDA with sentence-level embeddings (e.g.,
+        Sentence-BERT) for computing phrase--document similarity.
+  \item \textbf{Learned weight combination}: Instead of fixed multiplicative weights, use a small
+        held-out set to learn optimal combination weights via logistic regression or grid search.
+  \item \textbf{Cross-dataset evaluation}: Test on additional keyphrase benchmarks (SemEval-2010,
+        Inspec, NUS) to assess generalizability.
+  \item \textbf{Abstractive keyphrase generation}: Explore hybrid models that combine extractive
+        candidate ranking with generative keyphrase prediction.
+\end{enumerate}
+
+%% ================================================================
+%%  5  CONCLUSION
+%% ================================================================
+\section{Conclusion}\label{sec:conclusion}
+
+We presented SAKE, a simple yet effective unsupervised framework for keyphrase extraction from
+scientific documents that augments TF-IDF with positional, section-aware, and semantic relevance
+signals through multiplicative scoring. Our ablation study on the Krapivin benchmark (2,304
+documents) reveals a clear hierarchy of feature importance: section-aware weighting contributes the
+largest gain (+28.7\% relative F1@5), followed by positional weighting (+12.0\%), while LDA-based
+semantic relevance provides no additional benefit. The best-performing configuration (TF-IDF +
+Position + Section with aggressive title/abstract weights) achieves an F1@5 of 0.1668, representing
+a 56.2\% relative improvement over the TF-IDF baseline.
+
+These findings highlight that explicit structural signals in scientific papers --- particularly the
+distinction between title, abstract, and body --- are the dominant cue for keyphrase salience in
+unsupervised settings. Our negative result on LDA suggests that coarse-grained topic models are
+redundant when structural features are already present, pointing toward richer semantic
+representations (e.g., contextual embeddings) as the more promising direction for future improvement.
+
+
+%% ================================================================
+%%  6  TEAM RESPONSIBILITIES
+%% ================================================================
+\section{Team Responsibilities}\label{sec:team}
+
+\begin{itemize}
+  \item \textbf{Donggeun Yoo}: Idea proposing, dataset parsing, text preprocessing, candidate
+        phrase extraction, and implementation of the TF-IDF baseline.
+  \item \textbf{Lu Zhang}: Implementation of the positional, section-aware, and semantic relevance
+        modules; conducting ablation experiments; writing the report.
+\end{itemize}
+
+%% ================================================================
+%%  BACKMATTER
+%% ================================================================
+\backmatter
+
+\bmhead{Acknowledgements}
+
+This work was completed as part of the CSC 8855 course project.
+
+\section*{Declarations}
+
+\begin{itemize}
+\item \textbf{Code availability}: All code is available in the companion Jupyter notebooks
+      \texttt{ATP.ipynb} and \texttt{SAKE\_Methodology.ipynb}.
+\item \textbf{Data availability}: The Krapivin dataset is publicly available via HuggingFace
+      (\texttt{midas/krapivin}).
+\end{itemize}
+
+\bibliography{sn-bibliography}
+
+\end{document}
